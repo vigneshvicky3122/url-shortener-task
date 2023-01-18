@@ -194,7 +194,7 @@ app.post("/reset-email-verify", async function (req, res) {
       if (OTP) {
         await mailer(
           req.body.email,
-          `http://localhost:3000/instagram/user/accounts/my_accounts/password-reset/password/${OTP}`
+          `https://url-shortener-web-apps.netlify.app/instagram/user/accounts/my_accounts/password-reset/password/${OTP}`
         );
         let saveOtp = await Db.collection(
           process.env.DB_COLLECTION_ONE
