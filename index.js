@@ -62,7 +62,10 @@ app.post("/signup", async function (req, res) {
       );
 
       if (result) {
-        await mailer(req.body.email, `http://localhost:3000/${shortUrl}`);
+        await mailer(
+          req.body.email,
+          `https://url-shortener-web-apps.netlify.app/${shortUrl}`
+        );
         res.json({
           statusCode: 201,
           message:
