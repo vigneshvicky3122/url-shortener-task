@@ -1,62 +1,281 @@
 const express = require("express");
 const app = express();
+require("dotenv").config();
+const cors = require("cors");
+const PORT = process.env.PORT || 8000;
 const bodyParser = require("body-parser");
-const mongoose = require("mongoose");
-mongoose.set("strictQuery", false);
-mongoose.connect(
-  "mongodb+srv://Wikky:wikky123@instagram.6ad5rgs.mongodb.net/?retryWrites=true&w=majority"
+
+const { authentication, createToken } = require("./auth");
+const { hashPassword, hashCompare } = require("./hashPassword");
+const { mailer } = require("./nodemailer");
+const { MongoClient, ObjectId } = require("mongodb");
+const Client = new MongoClient(process.env.DB_URL);
+
+app.use(
+  bodyParser.json(),
+  cors({
+    origin: "*",
+    credentials: true,
+  })
 );
-const { MongooseModel } = require("./Models/urlshort");
 
-app.use(bodyParser.urlencoded({ extended: true }));
-app.set("view engine", "ejs");
+app.get("/Dashboard", authentication, async function (req, res) {
+  await Client.connect();
+  try {
+    let Db = Client.db(process.env.DB_NAME);
+    let result = await Db.collection(process.env.DB_COLLECTION_ONE)
+      .find()
+      .toArray();
 
-app.get("/", function (req, res) {
-  MongooseModel.find(function (err, result) {
-    if (err) {
-      console.log(err);
+    if (result) {
+      res.status(200).json({ result });
     } else {
-      res.render("UserInterface", {
-        urlResult: result,
+    }
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: "internal server error" });
+  } finally {
+    await Client.close();
+  }
+});
+app.post("/signup", async function (req, res) {
+  await Client.connect();
+  try {
+    let Db = Client.db(process.env.DB_NAME);
+    let hashedPassword = await hashPassword(req.body.password);
+    let shortUrl = generateUrl();
+    let verify = await Db.collection(process.env.DB_COLLECTION_ONE)
+      .find({ email: req.body.email })
+      .toArray();
+    if (verify.length === 0) {
+      let result = await Db.collection(process.env.DB_COLLECTION_ONE).insertOne(
+        {
+          name: req.body.name,
+          email: req.body.email,
+          username: req.body.username,
+          password: hashedPassword,
+          loginUrl: "/instagram/user/accounts/my_accounts/email/login",
+          shortUrl: shortUrl,
+          Active: false,
+          clickCount: 0,
+        }
+      );
+
+      if (result) {
+        await mailer(req.body.email, `http://localhost:3000/${shortUrl}`);
+        res.json({
+          statusCode: 201,
+          message:
+            "Signup successful, please check & verify your email, get to login link",
+        });
+      }
+    } else {
+      res.json({
+        statusCode: 401,
+        message: "This user was already exists, try to another email address",
       });
     }
-  });
+  } catch (error) {
+    console.log(error);
+    res.json({ statusCode: 500, message: "internal server error" });
+  } finally {
+    await Client.close();
+  }
 });
-app.post("/create", function (req, res) {
-  let newURL = new MongooseModel({
-    longUrl: req.body.longUrl,
-    shortUrl: generateUrl(),
-  });
-  newURL.save(function (err, data) {
-    if (err) throw err;
+app.post("/login", async function (req, res) {
+  await Client.connect();
+  try {
+    let Db = Client.db(process.env.DB_NAME);
+    let result = await Db.collection(process.env.DB_COLLECTION_ONE)
+      .find({
+        email: req.body.email,
+        Active: true,
+      })
+      .toArray();
 
-    res.redirect("/");
-  });
-});
-app.get("/:urlId", function (req, res) {
-  MongooseModel.findOne({ shortUrl: req.params.urlId }, function (err, data) {
-    if (err) throw err;
-    MongooseModel.findByIdAndUpdate(
-      { _id: data._id },
-      { $inc: { clickCount: 1 } },
-      function (err, updatedData) {
-        if (err) throw err;
-        res.redirect(data.longUrl);
+    if (result.length === 1) {
+      if (await hashCompare(req.body.password, result[0].password)) {
+        let token = await createToken(
+          result[0].email,
+          result[0].username,
+          result[0].name
+        );
+        res.json({
+          statusCode: 200,
+          message: "login successful",
+          token: token,
+        });
+      } else {
+        res.json({ statusCode: 404, message: "invalid credentials" });
       }
-    );
-  });
-});
-app.get("/delete/:id", function (req, res) {
-  MongooseModel.findOneAndDelete(
-    { _id: req.params.id },
-    function (err, deleteData) {
-      if (err) throw err;
-      res.redirect("/");
+    } else {
+      res.json({
+        statusCode: 405,
+        message:
+          "inactive user does not allowed this page , please active or left this page",
+      });
     }
-  );
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: "internal server error" });
+  } finally {
+    await Client.close();
+  }
 });
-app.listen(8000, function (req, res) {
-  console.log("server is running into port 8000");
+app.get("/:id", async function (req, res) {
+  await Client.connect();
+  try {
+    let Db = Client.db(process.env.DB_NAME);
+    let result = await Db.collection(process.env.DB_COLLECTION_ONE)
+      .find({ shortUrl: req.params.id })
+      .toArray();
+    if (result.length === 0) {
+      res.json({
+        statusCode: 401,
+        message: "User does not exist, Please Register",
+      });
+    } else {
+      let Active = await Db.collection(process.env.DB_COLLECTION_ONE).updateOne(
+        { _id: ObjectId(result[0]._id) },
+        { $set: { Active: true }, $inc: { clickCount: 1 } }
+      );
+      if (Active) {
+        res.json({
+          statusCode: 202,
+          message: "Account activated",
+          Url: result[0].loginUrl,
+        });
+      }
+    }
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: "internal server error" });
+  } finally {
+    await Client.close();
+  }
+});
+app.get("/delete/:id", authentication, async function (req, res) {
+  await Client.connect();
+  try {
+    let Db = Client.db(process.env.DB_NAME);
+    let result = await Db.collection(process.env.DB_COLLECTION_ONE).deleteOne({
+      _id: ObjectId(req.params.id),
+    });
+
+    if (result) {
+      res.status(200).json({ message: "User deleted" });
+    } else {
+    }
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: "internal server error" });
+  } finally {
+    await Client.close();
+  }
+});
+app.post("/reset-email-verify", async function (req, res) {
+  await Client.connect();
+
+  try {
+    const Db = Client.db(process.env.DB_NAME);
+
+    let user = await Db.collection(process.env.DB_COLLECTION_ONE)
+      .find({ email: req.body.email })
+      .toArray();
+    if (user.length === 1) {
+      let digits = "123456789";
+      let OTP = "";
+      for (let i = 0; i < 6; i++) {
+        OTP += digits[Math.floor(Math.random() * 9)];
+      }
+      if (OTP) {
+        await mailer(
+          req.body.email,
+          `http://localhost:3000/instagram/user/accounts/my_accounts/password-reset/password/${OTP}`
+        );
+        let saveOtp = await Db.collection(
+          process.env.DB_COLLECTION_ONE
+        ).findOneAndUpdate({ email: req.body.email }, { $set: { token: OTP } });
+        if (saveOtp) {
+          res.json({
+            statusCode: 200,
+            message:
+              "Reset password link send your registered email, check and update your password",
+          });
+        }
+      } else {
+        res.json({
+          statusCode: 401,
+          message: "User does not exist,can't reset your password",
+        });
+      }
+    }
+  } catch (error) {
+    console.log(error);
+    res.json({
+      statusCode: 500,
+      message: "internal server error",
+    });
+  } finally {
+    await Client.close();
+  }
+});
+
+app.put("/password-reset/:id", async (req, res) => {
+  await Client.connect();
+  try {
+    const Db = Client.db(process.env.DB_NAME);
+    let users = await Db.collection(process.env.DB_COLLECTION_ONE)
+      .find({ token: req.params.id })
+      .toArray();
+    if (users.length === 1) {
+      if (req.body.password === req.body.confirmPassword) {
+        let hashpassword = await hashPassword(req.body.password);
+
+        if (hashpassword) {
+          let reset = await Db.collection(
+            process.env.DB_COLLECTION_ONE
+          ).findOneAndUpdate(
+            { email: users[0].email },
+            { $set: { password: hashpassword } }
+          );
+          if (reset) {
+            res.json({
+              statusCode: 200,
+              message: "Password changed successfully",
+            });
+            let disable = await Db.collection(
+              process.env.DB_COLLECTION_ONE
+            ).findOneAndUpdate(
+              { email: users[0].email },
+              { $unset: { token: req.params.id } }
+            );
+          }
+        }
+      } else {
+        res.json({
+          statusCode: 403,
+          message: "Details does not match",
+        });
+      }
+    } else {
+      res.json({
+        statusCode: 401,
+        message: "invalid Otp, Retry",
+      });
+    }
+  } catch (error) {
+    console.log(error);
+    res.json({
+      statusCode: 500,
+      message: "internal server error",
+    });
+  } finally {
+    await Client.close();
+  }
+});
+app.listen(PORT, function () {
+  console.log("server is running into port " + PORT);
 });
 
 function generateUrl() {
