@@ -65,7 +65,7 @@ app.post("/signup", async function (req, res) {
       if (result) {
         await mailer(
           req.body.email,
-          `https://url-shortener-web-apps.netlify.app/${shortUrl}`
+          `https://url-shortener-web-apps.netlify.app/a/${shortUrl}`
         );
         res.json({
           statusCode: 201,
