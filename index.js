@@ -54,8 +54,7 @@ app.post("/signup", async function (req, res) {
           email: req.body.email,
           username: req.body.username,
           password: hashedPassword,
-          loginUrl:
-            "https://url-shortener-web-apps.netlify.app/instagram/user/accounts/my_accounts/email/login",
+          loginUrl: "/instagram/user/accounts/my_accounts/email/login",
           shortUrl: shortUrl,
           Active: false,
           clickCount: 0,
